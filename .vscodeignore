@@ -4,6 +4,7 @@
 .vscode/**
 src/**
 scripts/**
+tests/**
 webview/**
 tsconfig.json
 vite.config.webview.ts

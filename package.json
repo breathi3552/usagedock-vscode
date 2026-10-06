@@ -163,6 +163,7 @@
   "scripts": {
     "vscode:prepublish": "npm run build",
     "build": "npm run build:ext && npm run build:webview",
+    "test": "node --test tests/antigravity.test.mjs",
     "build:ext": "node ./scripts/build-extension.mjs",
     "build:webview": "vite build --config vite.config.webview.ts",
     "watch": "concurrently \"npm run watch:ext\" \"npm run watch:webview\"",

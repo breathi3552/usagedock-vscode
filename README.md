@@ -24,7 +24,7 @@ No UsageDock account. No hosted dashboard. No provider credentials sent to a Usa
 | GitHub Copilot | GitHub auth session in VS Code or GitHub CLI token | Copilot signed in to VS Code, or `gh auth login` completed |
 | Codex | Local Codex auth state | Codex authenticated locally |
 | Windsurf | Local Windsurf state and language server | Windsurf running and signed in |
-| Antigravity | Local Antigravity auth state and model quota metadata | Antigravity installed and signed in |
+| Antigravity | IDE, local agent or AGY CLI auth state and model quota metadata | Antigravity IDE, supported agent cache, or Windows AGY CLI authenticated locally |
 | Ollama | Running model list, VRAM usage, and available model count | Ollama running locally or reachable at the configured URL |
 
 Unavailable providers stay visible as connection states so you know what needs attention.
@@ -95,7 +95,9 @@ Use these from the Command Palette:
 - GitHub Copilot usage requires the GitHub CLI to be installed and authenticated, or a GitHub account signed in to VS Code with Copilot access.
 - Windsurf usage requires Windsurf to be running so its local language server can be reached.
 - Antigravity quota checks fetch model quota metadata only; they do not send prompts or run generations, so checking quota should not consume quota.
-- Antigravity OAuth refresh is optional and uses `USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID` and `USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET` when present; these values are not bundled in the extension.
+- Antigravity checks the running IDE language server first, then IDE SQLite OAuth state. When the IDE has no tokens, it reads `~/.pi/agent/antigravity-accounts.json` (the active account, or the first account when none is selected), then the Windows AGY CLI Credential Manager entry `gemini:antigravity`. Credential stores remain read-only.
+- Antigravity OAuth refresh requires both `USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID` and `USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET` in the extension host environment. OAuth client values are not bundled in the extension; quota checks with a valid access token work without this configuration.
+- Windows AGY CLI credential discovery uses a temporary PowerShell script with `-NoProfile -NonInteractive -File`. The script is cleaned up after execution and respects the system execution policy; restricted systems can use the agent cache fallback.
 - Remote environments such as SSH, containers, or Codespaces may not have access to the same local provider files as your desktop session.
 
 ### Ollama
@@ -123,6 +125,8 @@ The key is sent as `Authorization: Bearer <key>` on every request, which is the 
 
 ```powershell
 npm install
+npm test
+npx tsc --noEmit
 npm run build
 npx @vscode/vsce package
 ```

@@ -55,7 +55,9 @@ Key rules:
 
 ### Important implementation notes
 
-- The Antigravity provider's Google OAuth client ID/secret are read from environment variables (`USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID`, `USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET`). These are intentionally NOT bundled in the extension source.
+- Antigravity credential priority is running IDE language server, IDE SQLite OAuth state, Pi agent account cache, then Windows AGY CLI Credential Manager. Keep this order and read credential stores without modifying them.
+- Antigravity OAuth refresh requires both `USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID` and `USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET` from the extension host environment. Keep OAuth client values out of the bundle and user access/refresh tokens out of logs and source.
+- Windows credential discovery uses argument-array PowerShell execution with `-NoProfile -NonInteractive -File`, a timeout, hidden windows, and temporary-script cleanup. Respect system execution policy.
 - All network requests use `AbortSignal.timeout()` to prevent hanging fetches.
 - The webview CSP uses nonce-protected `script-src` and tightly scoped `localResourceRoots`.
 - Provider data flows through the VS Code `postMessage` channel, not from the web.
