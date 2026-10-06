@@ -5,6 +5,7 @@
 src/**
 scripts/**
 tests/**
+.scratch/**
 webview/**
 tsconfig.json
 vite.config.webview.ts

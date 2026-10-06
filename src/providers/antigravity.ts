@@ -296,7 +296,8 @@ function loadWindowsCliTokens(): OAuthTokens | null {
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim().replace(/^\uFEFF/, '');
     const data = JSON.parse(raw);
-    if (data?.auth_method !== 'oauth') {
+    // AGY uses "consumer" for Google OAuth; older caches use "oauth".
+    if (data?.auth_method !== 'oauth' && data?.auth_method !== 'consumer') {
       return null;
     }
     const accessToken = tokenString(data.token?.access_token);
@@ -942,6 +943,14 @@ export async function probeAntigravity(): Promise<{ plan?: string | null; lines:
   }
 
   if (!cloudData && oauthTokens.refreshToken && (sawAuthFailure || tokens.length === 0)) {
+    if (!process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID?.trim()
+      || !process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET?.trim()) {
+      throw new Error(
+        'Antigravity / AGY CLI OAuth refresh requires USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID '
+        + 'and USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET in the VS Code extension host environment. '
+        + 'Configure both or sign in to Antigravity / AGY CLI again and retry.',
+      );
+    }
     const refreshed = await refreshAccessToken(oauthTokens.refreshToken);
     if (refreshed) {
       const nextData = await probeCloudCode(refreshed);

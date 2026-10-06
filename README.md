@@ -125,7 +125,6 @@ The key is sent as `Authorization: Bearer <key>` on every request, which is the 
 
 ```powershell
 npm install
-npm test
 npx tsc --noEmit
 npm run build
 npx @vscode/vsce package
