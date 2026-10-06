@@ -319,7 +319,7 @@ function loadWindowsCliTokens(): OAuthTokens | null {
   }
 }
 
-function loadAgyCliTokens(): OAuthTokens | null {
+function loadFallbackTokens(): OAuthTokens | null {
   return loadAgentTokens() ?? (process.platform === 'win32' ? loadWindowsCliTokens() : null);
 }
 
@@ -778,16 +778,22 @@ function buildModelLines(configs: ModelConfig[]): MetricLine[] {
 // Cloud Code API (token-based fallback when LS is not running)
 // ---------------------------------------------------------------------------
 
+function loadOAuthClientConfig(): { clientId: string; clientSecret: string } | null {
+  const clientId = process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID?.trim();
+  const clientSecret = process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET?.trim();
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
 async function refreshAccessToken(refreshToken: string): Promise<string | null> {
   if (!refreshToken) {
     return null;
   }
 
-  const clientId = process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID?.trim();
-  const clientSecret = process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET?.trim();
-  if (!clientId || !clientSecret) {
+  const clientConfig = loadOAuthClientConfig();
+  if (!clientConfig) {
     return null;
   }
+  const { clientId, clientSecret } = clientConfig;
 
   const body = new URLSearchParams({
     client_id: clientId,
@@ -909,7 +915,7 @@ export async function probeAntigravity(): Promise<{ plan?: string | null; lines:
   // --- Strategy 2: Cloud Code API, preferring IDE tokens over CLI / agent tokens ---
   const dbPath = getAntigravityDbPath();
   const oauthTokens = (dbPath && fs.existsSync(dbPath) ? loadOAuthTokens(dbPath) : null)
-    ?? loadAgyCliTokens();
+    ?? loadFallbackTokens();
   if (!oauthTokens) {
     throw new Error('Antigravity / AGY CLI not installed or signed in.');
   }
@@ -943,8 +949,7 @@ export async function probeAntigravity(): Promise<{ plan?: string | null; lines:
   }
 
   if (!cloudData && oauthTokens.refreshToken && (sawAuthFailure || tokens.length === 0)) {
-    if (!process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID?.trim()
-      || !process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET?.trim()) {
+    if (!loadOAuthClientConfig()) {
       throw new Error(
         'Antigravity / AGY CLI OAuth refresh requires USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID '
         + 'and USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET in the VS Code extension host environment. '
