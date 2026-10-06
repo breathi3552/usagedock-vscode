@@ -3,10 +3,7 @@
 ## Unreleased
 
 ### Antigravity CLI and Agent Support
-- Added IDE-first OAuth fallback to the Pi agent account cache and Windows AGY CLI Credential Manager, enabling quota checks without the desktop IDE.
-- Support AGY CLI OAuth caches labeled `consumer` or `oauth`, and report missing OAuth client configuration when token refresh is required.
-- Extended the existing environment-configured OAuth refresh to CLI and agent tokens; OAuth client values remain outside the extension source.
-- Removed execution-policy bypass from Antigravity PowerShell discovery; Windows credential reads use a temporary script with bounded execution and cleanup.
+- Added fallback to Pi account cache and Windows AGY CLI credentials when Antigravity IDE is not running.
 
 ## 0.1.6
 

@@ -2,7 +2,3 @@ node_modules/
 dist/
 *.vsix
 .vscode-test/
-
-# Local validation files; keep them out of the upstream feature diff.
-/.scratch/
-/tests/

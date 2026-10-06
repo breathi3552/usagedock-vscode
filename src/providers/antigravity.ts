@@ -200,30 +200,24 @@ function loadOAuthTokens(dbPath: string): OAuthTokens | null {
 // CLI / agent credentials — read-only fallback when the IDE has no tokens.
 // ---------------------------------------------------------------------------
 
-function tokenString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value : null;
-}
-
 function loadAgentTokens(): OAuthTokens | null {
   try {
     const cachePath = path.join(os.homedir(), '.pi', 'agent', 'antigravity-accounts.json');
     const data = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
     const accounts = data?.accounts;
-    if (!accounts || typeof accounts !== 'object' || Array.isArray(accounts)) {
+    if (!accounts || typeof accounts !== 'object') {
       return null;
     }
-    // Respect an explicit active account; use the first account only if none is selected.
-    const accountId = tokenString(data.activeAccountId) ?? Object.keys(accounts)[0];
-    const account = accountId && Object.hasOwn(accounts, accountId) ? accounts[accountId] : null;
+    const accountId = data.activeAccountId || Object.keys(accounts)[0];
+    const account = accountId ? accounts[accountId] : null;
     if (!account || (account.type && account.type !== 'oauth')) {
       return null;
     }
-    const accessToken = tokenString(account.access);
-    const refreshToken = tokenString(account.refresh);
-    const expirySeconds = typeof account.expires === 'number' && Number.isFinite(account.expires)
+    const accessToken = account.access || null;
+    const refreshToken = account.refresh || null;
+    const expirySeconds = typeof account.expires === 'number'
       ? Math.floor(account.expires / 1000)
       : null;
-    // An expired access-only cache cannot authenticate; allow CLI discovery to continue.
     if (!refreshToken && expirySeconds !== null && expirySeconds <= Math.floor(Date.now() / 1000)) {
       return null;
     }
@@ -233,7 +227,6 @@ function loadAgentTokens(): OAuthTokens | null {
   }
 }
 
-// The script contains only a fixed credential target. Credential contents stay in stdout.
 const WINDOWS_CREDENTIAL_SCRIPT = `
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -246,7 +239,7 @@ public class UsageDockCredentialReader {
     [DllImport("Advapi32.dll")]
     public static extern void CredFree(IntPtr credential);
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct CREDENTIAL {
+    public struct Credential {
         public int Flags;
         public int Type;
         public string TargetName;
@@ -264,7 +257,7 @@ public class UsageDockCredentialReader {
         IntPtr pointer;
         if (!CredRead("gemini:antigravity", 1, 0, out pointer)) return "";
         try {
-            var credential = (CREDENTIAL)Marshal.PtrToStructure(pointer, typeof(CREDENTIAL));
+            var credential = (Credential)Marshal.PtrToStructure(pointer, typeof(Credential));
             byte[] bytes = new byte[credential.CredentialBlobSize];
             Marshal.Copy(credential.CredentialBlob, bytes, 0, bytes.Length);
             return System.Text.Encoding.UTF8.GetString(bytes);
@@ -278,44 +271,28 @@ public class UsageDockCredentialReader {
 `.trim();
 
 function loadWindowsCliTokens(): OAuthTokens | null {
-  const powershell = findPowershell();
-  if (!powershell) {
+  const psPath = findPowershell();
+  if (!psPath) {
     return null;
   }
 
-  let tempDir: string | null = null;
   try {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'usagedock-agy-'));
-    const scriptPath = path.join(tempDir, 'read-credential.ps1');
-    fs.writeFileSync(scriptPath, WINDOWS_CREDENTIAL_SCRIPT, { encoding: 'utf8', mode: 0o600 });
-    const raw = execFileSync(powershell, ['-NoProfile', '-NonInteractive', '-File', scriptPath], {
-      windowsHide: true,
-      encoding: 'utf8',
-      timeout: 5_000,
-      maxBuffer: 64 * 1024,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim().replace(/^\uFEFF/, '');
+    const raw = execFileSync(
+      psPath,
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', WINDOWS_CREDENTIAL_SCRIPT],
+      { windowsHide: true, encoding: 'utf8', timeout: 5_000 },
+    ).trim();
     const data = JSON.parse(raw);
-    // AGY uses "consumer" for Google OAuth; older caches use "oauth".
     if (data?.auth_method !== 'oauth' && data?.auth_method !== 'consumer') {
       return null;
     }
-    const accessToken = tokenString(data.token?.access_token);
-    const refreshToken = tokenString(data.token?.refresh_token);
-    const expiryMs = typeof data.token?.expiry === 'string' ? Date.parse(data.token.expiry) : NaN;
-    const expirySeconds = Number.isFinite(expiryMs) ? Math.floor(expiryMs / 1000) : null;
+    const accessToken = data.token?.access_token || null;
+    const refreshToken = data.token?.refresh_token || null;
+    const expiryMs = data.token?.expiry ? Date.parse(data.token.expiry) : NaN;
+    const expirySeconds = !isNaN(expiryMs) ? Math.floor(expiryMs / 1000) : null;
     return accessToken || refreshToken ? { accessToken, refreshToken, expirySeconds } : null;
   } catch {
-    // Missing credentials, execution policy restrictions and malformed JSON are unavailable sources.
     return null;
-  } finally {
-    if (tempDir) {
-      try {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      } catch {
-        // Cleanup failure must not expose credential contents or block quota checks.
-      }
-    }
   }
 }
 
@@ -363,7 +340,7 @@ function discoverWindowsLs(): LsDiscovery | null {
 
   try {
     const script = `& { $procs = @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*language_server*' -and $_.CommandLine -like '*antigravity*' } | Select-Object ProcessId, CommandLine); if ($procs.Count -eq 0) { '[]' } else { $procs | ConvertTo-Json -Compress } }`;
-    const raw = execFileSync(psPath, ['-NoProfile', '-NonInteractive', '-Command', script], {
+    const raw = execSync(`"${psPath}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "${script.replace(/"/g, '\\"')}"`, {
       windowsHide: true,
       encoding: 'utf8',
       timeout: 15_000,
@@ -395,10 +372,10 @@ function discoverWindowsLs(): LsDiscovery | null {
 
       // Discover all listening ports for this process.
       // The LS gRPC endpoint is on a different port than the extension server port.
-      if (Number.isInteger(pid) && pid > 0) {
+      if (pid != null) {
         try {
           const portScript = `& { $ports = @(Get-NetTCPConnection -OwningProcess ${pid} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort); if ($ports.Count -eq 0) { '[]' } else { $ports | ConvertTo-Json -Compress } }`;
-          const portsRaw = execFileSync(psPath, ['-NoProfile', '-NonInteractive', '-Command', portScript], {
+          const portsRaw = execSync(`"${psPath}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "${portScript.replace(/"/g, '\\"')}"`, {
             windowsHide: true,
             encoding: 'utf8',
             timeout: 10_000,
@@ -778,22 +755,16 @@ function buildModelLines(configs: ModelConfig[]): MetricLine[] {
 // Cloud Code API (token-based fallback when LS is not running)
 // ---------------------------------------------------------------------------
 
-function loadOAuthClientConfig(): { clientId: string; clientSecret: string } | null {
-  const clientId = process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID?.trim();
-  const clientSecret = process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET?.trim();
-  return clientId && clientSecret ? { clientId, clientSecret } : null;
-}
-
 async function refreshAccessToken(refreshToken: string): Promise<string | null> {
   if (!refreshToken) {
     return null;
   }
 
-  const clientConfig = loadOAuthClientConfig();
-  if (!clientConfig) {
+  const clientId = process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID?.trim();
+  const clientSecret = process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET?.trim();
+  if (!clientId || !clientSecret) {
     return null;
   }
-  const { clientId, clientSecret } = clientConfig;
 
   const body = new URLSearchParams({
     client_id: clientId,
@@ -912,17 +883,17 @@ export async function probeAntigravity(): Promise<{ plan?: string | null; lines:
     return lsResult;
   }
 
-  // --- Strategy 2: Cloud Code API, preferring IDE tokens over CLI / agent tokens ---
+  // --- Strategy 2: Cloud Code API with tokens from the DB or CLI/agent fallback ---
   const dbPath = getAntigravityDbPath();
   const oauthTokens = (dbPath && fs.existsSync(dbPath) ? loadOAuthTokens(dbPath) : null)
     ?? loadFallbackTokens();
   if (!oauthTokens) {
-    throw new Error('Antigravity / AGY CLI not installed or signed in.');
+    throw new Error('Antigravity not installed or not signed in.');
   }
 
   const tokens: string[] = [];
   const nowSeconds = Math.floor(Date.now() / 1000);
-  if (oauthTokens.accessToken && (oauthTokens.expirySeconds === null || oauthTokens.expirySeconds > nowSeconds)) {
+  if (oauthTokens.accessToken && (!oauthTokens.expirySeconds || oauthTokens.expirySeconds > nowSeconds)) {
     tokens.push(oauthTokens.accessToken);
   }
 
@@ -932,7 +903,7 @@ export async function probeAntigravity(): Promise<{ plan?: string | null; lines:
   }
 
   if (tokens.length === 0 && !oauthTokens.refreshToken) {
-    throw new Error('Sign in to Antigravity / AGY CLI again and retry.');
+    throw new Error('Start Antigravity and try again.');
   }
 
   let cloudData: any | null = null;
@@ -949,13 +920,6 @@ export async function probeAntigravity(): Promise<{ plan?: string | null; lines:
   }
 
   if (!cloudData && oauthTokens.refreshToken && (sawAuthFailure || tokens.length === 0)) {
-    if (!loadOAuthClientConfig()) {
-      throw new Error(
-        'Antigravity / AGY CLI OAuth refresh requires USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID '
-        + 'and USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET in the VS Code extension host environment. '
-        + 'Configure both or sign in to Antigravity / AGY CLI again and retry.',
-      );
-    }
     const refreshed = await refreshAccessToken(oauthTokens.refreshToken);
     if (refreshed) {
       const nextData = await probeCloudCode(refreshed);
@@ -972,5 +936,5 @@ export async function probeAntigravity(): Promise<{ plan?: string | null; lines:
     }
   }
 
-  throw new Error('Start Antigravity or sign in to AGY CLI / your agent again and retry.');
+  throw new Error('Start Antigravity and try again.');
 }
