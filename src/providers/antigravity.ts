@@ -1,8 +1,6 @@
 import * as fs from 'fs';
 import * as http from 'http';
 import * as https from 'https';
-import * as os from 'os';
-import * as path from 'path';
 import { execFileSync, execSync } from 'child_process';
 import * as vscode from 'vscode';
 import type { MetricLine } from './types';
@@ -197,35 +195,8 @@ function loadOAuthTokens(dbPath: string): OAuthTokens | null {
 }
 
 // ---------------------------------------------------------------------------
-// CLI / agent credentials — read-only fallback when the IDE has no tokens.
+// Windows AGY CLI credentials — read-only fallback when the IDE has no tokens.
 // ---------------------------------------------------------------------------
-
-function loadAgentTokens(): OAuthTokens | null {
-  try {
-    const cachePath = path.join(os.homedir(), '.pi', 'agent', 'antigravity-accounts.json');
-    const data = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
-    const accounts = data?.accounts;
-    if (!accounts || typeof accounts !== 'object') {
-      return null;
-    }
-    const accountId = data.activeAccountId || Object.keys(accounts)[0];
-    const account = accountId ? accounts[accountId] : null;
-    if (!account || (account.type && account.type !== 'oauth')) {
-      return null;
-    }
-    const accessToken = account.access || null;
-    const refreshToken = account.refresh || null;
-    const expirySeconds = typeof account.expires === 'number'
-      ? Math.floor(account.expires / 1000)
-      : null;
-    if (!refreshToken && expirySeconds !== null && expirySeconds <= Math.floor(Date.now() / 1000)) {
-      return null;
-    }
-    return accessToken || refreshToken ? { accessToken, refreshToken, expirySeconds } : null;
-  } catch {
-    return null;
-  }
-}
 
 const WINDOWS_CREDENTIAL_SCRIPT = `
 $ErrorActionPreference = 'Stop'
@@ -279,7 +250,7 @@ function loadWindowsCliTokens(): OAuthTokens | null {
   try {
     const raw = execFileSync(
       psPath,
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', WINDOWS_CREDENTIAL_SCRIPT],
+      ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_CREDENTIAL_SCRIPT],
       { windowsHide: true, encoding: 'utf8', timeout: 5_000 },
     ).trim();
     const data = JSON.parse(raw);
@@ -294,10 +265,6 @@ function loadWindowsCliTokens(): OAuthTokens | null {
   } catch {
     return null;
   }
-}
-
-function loadFallbackTokens(): OAuthTokens | null {
-  return loadAgentTokens() ?? (process.platform === 'win32' ? loadWindowsCliTokens() : null);
 }
 
 // ---------------------------------------------------------------------------
@@ -340,7 +307,7 @@ function discoverWindowsLs(): LsDiscovery | null {
 
   try {
     const script = `& { $procs = @(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*language_server*' -and $_.CommandLine -like '*antigravity*' } | Select-Object ProcessId, CommandLine); if ($procs.Count -eq 0) { '[]' } else { $procs | ConvertTo-Json -Compress } }`;
-    const raw = execSync(`"${psPath}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "${script.replace(/"/g, '\\"')}"`, {
+    const raw = execSync(`"${psPath}" -NoProfile -NonInteractive -Command "${script.replace(/"/g, '\\"')}"`, {
       windowsHide: true,
       encoding: 'utf8',
       timeout: 15_000,
@@ -375,7 +342,7 @@ function discoverWindowsLs(): LsDiscovery | null {
       if (pid != null) {
         try {
           const portScript = `& { $ports = @(Get-NetTCPConnection -OwningProcess ${pid} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort); if ($ports.Count -eq 0) { '[]' } else { $ports | ConvertTo-Json -Compress } }`;
-          const portsRaw = execSync(`"${psPath}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "${portScript.replace(/"/g, '\\"')}"`, {
+          const portsRaw = execSync(`"${psPath}" -NoProfile -NonInteractive -Command "${portScript.replace(/"/g, '\\"')}"`, {
             windowsHide: true,
             encoding: 'utf8',
             timeout: 10_000,
@@ -886,14 +853,14 @@ export async function probeAntigravity(): Promise<{ plan?: string | null; lines:
   // --- Strategy 2: Cloud Code API with tokens from the DB or CLI/agent fallback ---
   const dbPath = getAntigravityDbPath();
   const oauthTokens = (dbPath && fs.existsSync(dbPath) ? loadOAuthTokens(dbPath) : null)
-    ?? loadFallbackTokens();
+    ?? (process.platform === 'win32' ? loadWindowsCliTokens() : null);
   if (!oauthTokens) {
     throw new Error('Antigravity not installed or not signed in.');
   }
 
   const tokens: string[] = [];
   const nowSeconds = Math.floor(Date.now() / 1000);
-  if (oauthTokens.accessToken && (!oauthTokens.expirySeconds || oauthTokens.expirySeconds > nowSeconds)) {
+  if (oauthTokens.accessToken && (oauthTokens.expirySeconds === null || oauthTokens.expirySeconds > nowSeconds)) {
     tokens.push(oauthTokens.accessToken);
   }
 
@@ -920,6 +887,14 @@ export async function probeAntigravity(): Promise<{ plan?: string | null; lines:
   }
 
   if (!cloudData && oauthTokens.refreshToken && (sawAuthFailure || tokens.length === 0)) {
+    if (!process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID?.trim()
+      || !process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET?.trim()) {
+      throw new Error(
+        'Antigravity OAuth refresh requires USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID '
+        + 'and USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET in the VS Code extension host environment. '
+        + 'Configure both or sign in again.',
+      );
+    }
     const refreshed = await refreshAccessToken(oauthTokens.refreshToken);
     if (refreshed) {
       const nextData = await probeCloudCode(refreshed);

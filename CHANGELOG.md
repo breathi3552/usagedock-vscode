@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-### Antigravity CLI and Agent Support
-- Added fallback to Pi account cache and Windows AGY CLI credentials when Antigravity IDE is not running.
+### Antigravity CLI Support
+- Added fallback to Windows AGY CLI credentials when the Antigravity IDE has no usable credentials.
 
 ## 0.1.6
 

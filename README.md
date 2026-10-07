@@ -24,7 +24,7 @@ No UsageDock account. No hosted dashboard. No provider credentials sent to a Usa
 | GitHub Copilot | GitHub auth session in VS Code or GitHub CLI token | Copilot signed in to VS Code, or `gh auth login` completed |
 | Codex | Local Codex auth state | Codex authenticated locally |
 | Windsurf | Local Windsurf state and language server | Windsurf running and signed in |
-| Antigravity | Local Antigravity auth state, Pi account cache, or Windows AGY CLI credentials | Antigravity IDE or AGY CLI signed in |
+| Antigravity | Local Antigravity auth state or Windows AGY CLI credentials | Antigravity IDE or Windows AGY CLI signed in |
 | Ollama | Running model list, VRAM usage, and available model count | Ollama running locally or reachable at the configured URL |
 
 Unavailable providers stay visible as connection states so you know what needs attention.
@@ -95,7 +95,7 @@ Use these from the Command Palette:
 - GitHub Copilot usage requires the GitHub CLI to be installed and authenticated, or a GitHub account signed in to VS Code with Copilot access.
 - Windsurf usage requires Windsurf to be running so its local language server can be reached.
 - Antigravity quota checks fetch model quota metadata only; they do not send prompts or run generations, so checking quota should not consume quota.
-- Antigravity checks the running IDE language server first, falling back to local IDE auth state, Pi agent account cache, or Windows AGY CLI credentials.
+- Antigravity checks the running IDE language server first, then IDE SQLite auth state, then Windows AGY CLI credentials.
 - Antigravity OAuth refresh is optional and uses `USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID` and `USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET` when present; these values are not bundled in the extension.
 - Remote environments such as SSH, containers, or Codespaces may not have access to the same local provider files as your desktop session.
 
