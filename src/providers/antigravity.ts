@@ -1,7 +1,9 @@
 import * as fs from 'fs';
 import * as http from 'http';
 import * as https from 'https';
-import { execFileSync, execSync } from 'child_process';
+import * as os from 'os';
+import * as path from 'path';
+import { execFile, execFileSync, execSync } from 'child_process';
 import * as vscode from 'vscode';
 import type { MetricLine } from './types';
 import { getAntigravityDbPath } from '../util/platform';
@@ -265,6 +267,25 @@ function loadWindowsCliTokens(): OAuthTokens | null {
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// CLI owns token renewal and credential persistence; UsageDock only reads the result.
+async function renewWindowsCliTokens(): Promise<OAuthTokens | null> {
+  const localAppData = process.env.LOCALAPPDATA;
+  const installedPath = localAppData ? path.join(localAppData, 'agy', 'bin', 'agy.exe') : null;
+  const executable = installedPath && fs.existsSync(installedPath) ? installedPath : 'agy.exe';
+  const succeeded = await new Promise<boolean>((resolve) => {
+    const child = execFile(executable, ['models'], {
+      cwd: os.tmpdir(),
+      windowsHide: true,
+      timeout: 20_000,
+      maxBuffer: 64 * 1024,
+    }, (error) => resolve(!error));
+    // A quota check must not wait for terminal input. Never log CLI output or errors.
+    child.stdin?.end();
+  });
+  return succeeded ? loadWindowsCliTokens() : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -850,10 +871,11 @@ export async function probeAntigravity(): Promise<{ plan?: string | null; lines:
     return lsResult;
   }
 
-  // --- Strategy 2: Cloud Code API with tokens from the DB or CLI/agent fallback ---
+  // --- Strategy 2: Cloud Code API with IDE tokens or Windows CLI credentials ---
   const dbPath = getAntigravityDbPath();
-  const oauthTokens = (dbPath && fs.existsSync(dbPath) ? loadOAuthTokens(dbPath) : null)
-    ?? (process.platform === 'win32' ? loadWindowsCliTokens() : null);
+  const dbTokens = dbPath && fs.existsSync(dbPath) ? loadOAuthTokens(dbPath) : null;
+  const usingCli = !dbTokens && process.platform === 'win32';
+  const oauthTokens = dbTokens ?? (usingCli ? loadWindowsCliTokens() : null);
   if (!oauthTokens) {
     throw new Error('Antigravity not installed or not signed in.');
   }
@@ -870,7 +892,9 @@ export async function probeAntigravity(): Promise<{ plan?: string | null; lines:
   }
 
   if (tokens.length === 0 && !oauthTokens.refreshToken) {
-    throw new Error('Start Antigravity and try again.');
+    throw new Error(usingCli
+      ? 'AGY CLI credentials have expired. Run "agy models" in a terminal to check your sign-in, then retry.'
+      : 'Start Antigravity and try again.');
   }
 
   let cloudData: any | null = null;
@@ -887,15 +911,25 @@ export async function probeAntigravity(): Promise<{ plan?: string | null; lines:
   }
 
   if (!cloudData && oauthTokens.refreshToken && (sawAuthFailure || tokens.length === 0)) {
-    if (!process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID?.trim()
-      || !process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET?.trim()) {
-      throw new Error(
-        'Antigravity OAuth refresh requires USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID '
-        + 'and USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET in the VS Code extension host environment. '
-        + 'Configure both or sign in again.',
-      );
+    let refreshed: string | null = null;
+    if (usingCli) {
+      const renewed = await renewWindowsCliTokens();
+      if (renewed?.accessToken && (renewed.expirySeconds === null
+        || renewed.expirySeconds > Math.floor(Date.now() / 1000))) {
+        refreshed = renewed.accessToken;
+      }
     }
-    const refreshed = await refreshAccessToken(oauthTokens.refreshToken);
+    if (!refreshed) {
+      if (!process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID?.trim()
+        || !process.env.USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET?.trim()) {
+        throw new Error(usingCli
+          ? 'AGY CLI could not renew Antigravity credentials. Run "agy models" in a terminal to check your sign-in, then retry.'
+          : 'Antigravity OAuth refresh requires USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID '
+            + 'and USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET in the VS Code extension host environment. '
+            + 'Configure both or sign in again.');
+      }
+      refreshed = await refreshAccessToken(oauthTokens.refreshToken);
+    }
     if (refreshed) {
       const nextData = await probeCloudCode(refreshed);
       if (nextData && !nextData._authFailed) {
@@ -911,5 +945,7 @@ export async function probeAntigravity(): Promise<{ plan?: string | null; lines:
     }
   }
 
-  throw new Error('Start Antigravity and try again.');
+  throw new Error(usingCli
+    ? 'Antigravity quota is unavailable through AGY CLI. Run "agy models" in a terminal to check your sign-in, then retry.'
+    : 'Start Antigravity and try again.');
 }

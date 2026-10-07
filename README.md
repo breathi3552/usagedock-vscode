@@ -96,7 +96,9 @@ Use these from the Command Palette:
 - Windsurf usage requires Windsurf to be running so its local language server can be reached.
 - Antigravity quota checks fetch model quota metadata only; they do not send prompts or run generations, so checking quota should not consume quota.
 - Antigravity checks the running IDE language server first, then IDE SQLite auth state, then Windows AGY CLI credentials.
-- Antigravity OAuth refresh is optional and uses `USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID` and `USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET` when present; these values are not bundled in the extension.
+- For expired or rejected Windows AGY CLI tokens, UsageDock runs `agy models` once with a 20-second timeout, then rereads credentials. The CLI manages its own session updates; no OAuth client configuration is needed for successful CLI renewal. Install `agy` in its standard Windows location or make it available on `PATH`.
+- CLI authentication failures may clear the CLI session or require browser sign-in. Run `agy models` in a terminal if automatic renewal fails.
+- Direct Antigravity OAuth refresh remains optional and uses `USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_ID` and `USAGEDOCK_ANTIGRAVITY_GOOGLE_CLIENT_SECRET`; these values are not bundled in the extension.
 - Remote environments such as SSH, containers, or Codespaces may not have access to the same local provider files as your desktop session.
 
 ### Ollama

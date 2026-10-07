@@ -4,6 +4,7 @@
 
 ### Antigravity CLI Support
 - Added fallback to Windows AGY CLI credentials when the Antigravity IDE has no usable credentials.
+- Renew expired or rejected CLI tokens through `agy models` before rereading credentials, with bounded execution and CLI-specific sign-in guidance.
 
 ## 0.1.6
 
